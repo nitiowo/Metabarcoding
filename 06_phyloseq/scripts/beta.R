@@ -1,5 +1,5 @@
 # beta.R
-# Beta diversity: ordination
+# Beta diversity: ordination and PERMANOVA
 
 source("setup.R")
 

@@ -19,9 +19,9 @@ for (nm in names(datasets)) {
   summarise_ps_print(datasets[[nm]], nm, tax_ranks)
 }
 
-write.csv(summary_df,
-          file.path(outdir, "stats", "dataset_summary.csv"),
-          row.names = FALSE)
+save_stats(summary_df,
+           file.path(outdir, "stats", "dataset_summary"),
+           caption = "Dataset summary: taxa counts and % reads unassigned")
 
 txt <- capture.output({
   for (nm in names(datasets))

@@ -7,6 +7,9 @@ library(vegan)
 library(patchwork)
 library(RColorBrewer)
 library(flextable)
+library(pheatmap)
+library(viridis)
+library(VennDiagram)
 
 set.seed(42)
 output_root <- "output"

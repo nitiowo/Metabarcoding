@@ -27,7 +27,7 @@ agg_rank <- function(ps, rank = "Species") {
   tax_glom(ps, taxrank = rank, NArm = FALSE)
 }
 
-# Converts OTU table to presence/absence data
+# Converts ASV table to presence/absence data
 to_pa <- function(ps) {
   ot <- as(otu_table(ps), "matrix")
   ot[ot > 0] <- 1
@@ -186,7 +186,7 @@ run_ordination <- function(ps, method = "NMDS", distance = "jaccard",
   if (!is.null(color_palette))
     p <- p + scale_color_manual(values = color_palette)
 
-  # 95% t-ellipses if >= 2 groups with >= 3 points
+  # 95% confidence ellipses when enough groups have >= 3 points
   grps <- data.frame(sample_data(ps_use))[[color_var]]
   grp_n <- table(grps)
   if (sum(grp_n >= 3) >= 2)
@@ -206,4 +206,81 @@ run_permanova <- function(ps, formula_str, distance = "jaccard",
   dm <- vegdist(otu, method = distance, binary = binary)
   adonis2(as.formula(paste("dm", formula_str)), data = meta,
           permutations = nperm)
+}
+
+# ---- Heatmap ----
+
+# Top-N taxa heatmap with lake annotation
+plot_top_heatmap <- function(ps, rank = "Genus", top_n = 30,
+                             annotation_var = "Lake",
+                             lake_colors = NULL, lake_order = NULL,
+                             tsub = NULL) {
+  ps_agg <- agg_rank(ps, rank) %>% subset_taxa_custom(tsub)
+  ps_rel <- transform_sample_counts(ps_agg, function(x) x / sum(x))
+
+  otu <- as(otu_table(ps_rel), "matrix")
+  if (!taxa_are_rows(ps_rel)) otu <- t(otu)
+
+  tt <- data.frame(tax_table(ps_rel), stringsAsFactors = FALSE)
+  rn <- tt[[rank]]
+  rn[is.na(rn)] <- paste0("Unassigned_", seq_along(rn[is.na(rn)]))
+  rownames(otu) <- make.unique(rn)
+
+  idx <- order(rowMeans(otu), decreasing = TRUE)[1:min(top_n, nrow(otu))]
+  otu_top <- otu[idx, , drop = FALSE]
+
+  ann <- data.frame(sample_data(ps_rel))[, annotation_var, drop = FALSE]
+  ann_colors <- list()
+  if ("Lake" %in% colnames(ann) && !is.null(lake_colors) && !is.null(lake_order))
+    ann_colors[["Lake"]] <- lake_colors[levels(factor(ann$Lake, lake_order))]
+
+  pheatmap(otu_top, annotation_col = ann, annotation_colors = ann_colors,
+           cluster_cols = TRUE, cluster_rows = TRUE,
+           fontsize_row = 7, fontsize_col = 5,
+           color = viridis(100), border_color = NA)
+}
+
+# ---- Venn/Upset ----
+
+# Extract unique taxa at a given rank
+get_taxa_set <- function(ps, rank = "Species") {
+  ps_agg <- agg_rank(ps, rank) %>% to_pa()
+  tt <- data.frame(tax_table(ps_agg), stringsAsFactors = FALSE)
+  if (rank == "ASV") return(taxa_names(ps_agg))
+  ids <- tt[[rank]]
+  unique(ids[!is.na(ids)])
+}
+
+# Binary matrix for UpSetR from a named list of taxa sets
+make_upset_matrix <- function(taxa_sets) {
+  all_taxa <- unique(unlist(taxa_sets))
+  mat <- data.frame(row.names = all_taxa)
+  for (nm in names(taxa_sets))
+    mat[[nm]] <- as.integer(all_taxa %in% taxa_sets[[nm]])
+  mat
+}
+
+# ---- Trebitz Compare ----
+
+# Read Trebitz CSV(s)
+load_trebitz <- function(filepath) {
+  read.csv(filepath, stringsAsFactors = FALSE)
+}
+
+# Compare marker taxa against Trebitz lists, return unexpected detections
+compare_to_trebitz <- function(ps, trebitz_df, rank = "Species", lake = NULL) {
+  ps_agg <- agg_rank(ps, rank) %>% to_pa()
+  if (!is.null(lake)) {
+    sd <- data.frame(sample_data(ps_agg))
+    keep <- rownames(sd)[sd$Lake == lake]
+    if (length(keep) == 0) return(tibble(taxon = character(), rank = character()))
+    ps_agg <- prune_samples(keep, ps_agg)
+    ps_agg <- prune_taxa(taxa_sums(ps_agg) > 0, ps_agg)
+  }
+  tt <- data.frame(tax_table(ps_agg), stringsAsFactors = FALSE)
+  detected <- unique(na.omit(tt[[rank]]))
+  known <- unique(na.omit(trebitz_df[[rank]]))
+  unexpected <- setdiff(detected, known)
+  if (length(unexpected) == 0) return(tibble(taxon = character(), rank = character()))
+  tibble(taxon = unexpected, rank = rank)
 }
