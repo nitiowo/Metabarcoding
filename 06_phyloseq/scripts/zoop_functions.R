@@ -91,6 +91,23 @@ save_plot <- function(p, filepath, width = 12, height = 8) {
   cat("Saved:", filepath, "\n")
 }
 
+# Save a data frame as CSV and Word - formatted table (editable)
+save_stats <- function(df, filepath_base, caption = NULL) {
+  dir.create(dirname(filepath_base), recursive = TRUE, showWarnings = FALSE)
+
+  csv_path <- paste0(filepath_base, ".csv")
+  write.csv(df, csv_path, row.names = FALSE)
+  cat("Saved:", csv_path, "\n")
+
+  docx_path <- paste0(filepath_base, ".docx")
+  ft <- flextable(as.data.frame(df))
+  ft <- autofit(ft)
+  ft <- theme_booktabs(ft)
+  if (!is.null(caption)) ft <- set_caption(ft, caption)
+  flextable::save_as_docx(ft, path = docx_path)
+  cat("Saved:", docx_path, "\n")
+}
+
 # Save text summary to file
 save_summary <- function(text, filepath) {
   dir.create(dirname(filepath), recursive = TRUE, showWarnings = FALSE)
