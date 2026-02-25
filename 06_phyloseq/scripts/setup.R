@@ -51,10 +51,6 @@ ps_markers     <- list(Folmer = ps_folmer, Leray = ps_leray, `18S` = ps_18S)
 ps_all_methods <- c(ps_markers, list(Morphology = ps_morph))
 ps_coi         <- list(Folmer = ps_folmer, Leray = ps_leray)
 
-# ---- Morph info ----
-morph_sample_names <- sample_names(ps_morph)
-morph_station_ids  <- data.frame(sample_data(ps_morph))$Station_ID
-
 # ---- Output directories for each analysis step/script ----
 out_dirs <- c("exploratory", "alpha", "beta", "composition",
               "overlap", "heatmaps", "trebitz_compare")

@@ -184,6 +184,42 @@ compute_alpha_all <- function(ps_list,
   bind_rows(imap(ps_list, ~ compute_alpha(.x, .y, metrics, lake_order)))
 }
 
+# Kruskal-Wallis test across groups
+run_kruskal <- function(alpha_long, group_var, group_by_vars = NULL) {
+  grp <- c(group_by_vars, "Metric")
+  alpha_long %>%
+    group_by(across(all_of(grp))) %>%
+    summarise(
+      H = tryCatch(kruskal.test(Value ~ .data[[group_var]])$statistic,
+                   error = function(e) NA_real_),
+      df = tryCatch(kruskal.test(Value ~ .data[[group_var]])$parameter,
+                    error = function(e) NA_real_),
+      p_value = tryCatch(kruskal.test(Value ~ .data[[group_var]])$p.value,
+                         error = function(e) NA_real_),
+      .groups = "drop") %>%
+    mutate(sig = sig_stars(p_value))
+}
+
+# Pairwise Wilcoxon with BH adjustment
+run_pairwise_wilcox <- function(alpha_long, group_var,
+                                group_by_vars = NULL) {
+  grp <- c(group_by_vars, "Metric")
+  alpha_long %>%
+    group_by(across(all_of(grp))) %>%
+    reframe({
+      pw <- tryCatch(
+        pairwise.wilcox.test(Value, .data[[group_var]],
+                             p.adjust.method = "BH"),
+        error = function(e) NULL)
+      if (is.null(pw)) return(tibble())
+      as.data.frame(pw$p.value) %>%
+        rownames_to_column("Group1") %>%
+        pivot_longer(-Group1, names_to = "Group2", values_to = "p.adj") %>%
+        filter(!is.na(p.adj))
+    }) %>%
+    mutate(sig = sig_stars(p.adj))
+}
+
 # ---- Beta Diversity ----
 
 # Runs ordination and returns a list with the plot, ordination, and ps

@@ -1,5 +1,5 @@
 # alpha.R
-# Alpha diversity: compute and plot metrics
+# Alpha diversity: compute, compare, and plot
 
 source("setup.R")
 
@@ -14,12 +14,44 @@ use_metrics <- c("Observed", "InvSimpson")
 # ---- Filter ----
 ps_filt <- filter_ps_list(use_ps_list, use_markers, use_lakes)
 
-# ---- Compute a div across all markers----
+# ---- Compute ----
 alpha_all <- compute_alpha_all(ps_filt, use_metrics, lake_order)
 
 alpha_long <- alpha_all %>%
   pivot_longer(cols = all_of(use_metrics),
                names_to = "Metric", values_to = "Value")
+
+# ---- Summary Table ----
+alpha_summary <- alpha_all %>%
+  group_by(Marker, Lake) %>%
+  summarise(across(all_of(use_metrics),
+                   list(mean = mean, sd = sd), .names = "{.col}_{.fn}"),
+            n = n(), .groups = "drop")
+
+write.csv(alpha_summary,
+          file.path(outdir, "stats", "alpha_summary_by_marker_lake.csv"),
+          row.names = FALSE)
+
+# ---- Between Markers: Kruskal-Wallis ----
+kw_mk <- run_kruskal(alpha_long, "Marker")
+pw_mk <- run_pairwise_wilcox(alpha_long, "Marker")
+
+write.csv(kw_mk, file.path(outdir, "stats", "alpha_kruskal_markers.csv"),
+          row.names = FALSE)
+write.csv(pw_mk, file.path(outdir, "stats", "alpha_pairwise_markers.csv"),
+          row.names = FALSE)
+
+# ---- Between Lakes Per Marker ----
+kw_lk <- run_kruskal(alpha_long, "Lake", group_by_vars = "Marker")
+pw_lk <- run_pairwise_wilcox(alpha_long, "Lake", group_by_vars = "Marker")
+
+write.csv(kw_lk, file.path(outdir, "stats",
+                            "alpha_kruskal_lakes_per_marker.csv"),
+          row.names = FALSE)
+write.csv(pw_lk %>% filter(p.adj < 0.05),
+          file.path(outdir, "stats",
+                    "alpha_pairwise_lakes_significant.csv"),
+          row.names = FALSE)
 
 # ---- Boxplot: Between Markers ----
 p_mk <- ggplot(alpha_long, aes(x = Marker, y = Value, fill = Marker)) +
