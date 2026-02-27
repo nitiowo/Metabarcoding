@@ -51,9 +51,40 @@ ps_markers     <- list(Folmer = ps_folmer, Leray = ps_leray, `18S` = ps_18S)
 ps_all_methods <- c(ps_markers, list(Morphology = ps_morph))
 ps_coi         <- list(Folmer = ps_folmer, Leray = ps_leray)
 
-# ---- Output directories ----
+# ---- P/A Versions ----
+ps_markers_pa <- lapply(ps_markers, to_pa)
+ps_all_pa     <- lapply(ps_all_methods, to_pa)
+
+# ---- Station-Aggregated Objects ----
+ps_morph_by_station <- ps_morph %>%
+  rename_samples_to_station() %>%
+  aggregate_to_station()
+
+ps_markers_by_station <- lapply(ps_markers, function(ps) {
+  ps %>% rename_samples_to_station() %>% aggregate_to_station()
+})
+
+# ---- Combined Datasets ----
+shared_stations <- Reduce(intersect,
+                          c(lapply(ps_markers_by_station, sample_names),
+                            list(sample_names(ps_morph_by_station))))
+
+ps_markers_combined <- combine_ps_pa(ps_markers_by_station, "Species",
+                                      shared_stations)
+ps_coi_combined <- combine_ps_pa(
+  ps_markers_by_station[c("Folmer", "Leray")], "Species", shared_stations)
+ps_all_combined <- combine_ps_pa(
+  c(ps_markers_by_station, list(Morphology = ps_morph_by_station)),
+  "Species", shared_stations)
+
+# ---- Morph Info ----
+morph_sample_names <- sample_names(ps_morph)
+morph_station_ids  <- data.frame(sample_data(ps_morph))$Station_ID
+
+# ---- Output Directories ----
 out_dirs <- c("exploratory", "alpha", "beta", "composition",
-              "overlap", "heatmaps", "differential", "trebitz_compare")
+              "overlap", "heatmaps", "differential",
+              "focal_taxon", "trebitz_compare")
 for (d in out_dirs) {
   dir.create(file.path(output_root, d, "figures"),
              recursive = TRUE, showWarnings = FALSE)

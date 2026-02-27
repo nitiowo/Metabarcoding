@@ -72,7 +72,101 @@ filter_ps_list <- function(ps_list, markers = NULL, lakes = NULL,
   })
 }
 
-# ---- Output Functions ----
+# Rename sample names to Station_ID
+rename_samples_to_station <- function(ps) {
+  sd <- data.frame(sample_data(ps))
+  if ("Station_ID" %in% colnames(sd)) {
+    sample_names(ps) <- sd$Station_ID
+  }
+  ps
+}
+
+# Merge replicate samples at the same station into station-level P/A
+# To compare molecular data to morph data
+aggregate_to_station <- function(ps) {
+  sd <- data.frame(sample_data(ps))
+  stations <- unique(sample_names(ps))
+  if (length(stations) == nsamples(ps)) return(to_pa(ps))
+
+  otu <- as(otu_table(ps), "matrix")
+  if (!taxa_are_rows(ps)) otu <- t(otu)
+  agg <- sapply(stations, function(s) {
+    idx <- which(sample_names(ps) == s)
+    if (length(idx) == 1) return(otu[, idx])
+    rowSums(otu[, idx, drop = FALSE]) > 0
+  })
+  agg <- matrix(as.integer(agg), nrow = nrow(otu),
+                dimnames = list(rownames(otu), stations))
+
+  new_sd <- sd[!duplicated(sample_names(ps)), , drop = FALSE]
+  rownames(new_sd) <- stations[!duplicated(stations)]
+
+  phyloseq(otu_table(agg, taxa_are_rows = TRUE),
+           sample_data(new_sd),
+           access(ps, "tax_table", errorIfNULL = FALSE))
+}
+
+# Merge multiple ps objects into one P/A dataset at a given rank
+combine_ps_pa <- function(ps_list, rank = "Species", shared_samples = NULL) {
+  ps_prepped <- lapply(ps_list, function(ps) agg_rank(ps, rank) %>% to_pa())
+
+  if (is.null(shared_samples))
+    shared_samples <- Reduce(intersect, lapply(ps_prepped, sample_names))
+
+  all_samples <- shared_samples
+  get_ids <- function(ps) {
+    tt <- data.frame(tax_table(ps), stringsAsFactors = FALSE)
+    if (rank %in% colnames(tt)) {
+      ids <- tt[[rank]]
+      ids[is.na(ids)] <- taxa_names(ps)[is.na(ids)]
+    } else {
+      ids <- taxa_names(ps)
+    }
+    ids
+  }
+
+  all_ids <- unique(unlist(lapply(ps_prepped, get_ids)))
+  mat <- matrix(0L, nrow = length(all_ids), ncol = length(all_samples),
+                dimnames = list(all_ids, all_samples))
+
+  for (ps in ps_prepped) {
+    otu <- as(otu_table(ps), "matrix")
+    if (!taxa_are_rows(ps)) otu <- t(otu)
+    ids <- get_ids(ps)
+    for (i in seq_along(ids)) {
+      tid <- ids[i]
+      shared_s <- intersect(colnames(otu), all_samples)
+      mat[tid, shared_s] <- pmax(mat[tid, shared_s],
+                                  as.integer(otu[i, shared_s] > 0))
+    }
+  }
+
+  mat <- mat[rowSums(mat) > 0, , drop = FALSE]
+  sd <- sample_data(ps_prepped[[1]])[all_samples, ]
+  tax_mat <- matrix(rownames(mat), ncol = 1,
+                    dimnames = list(rownames(mat), rank))
+
+  phyloseq(otu_table(mat, taxa_are_rows = TRUE),
+           sd, tax_table(tax_mat))
+}
+
+# Melt a list of ps objects into a single long df for ggplot
+build_long_df <- function(ps_list, rank = "Genus", relative = TRUE,
+                          tsub = NULL, lakes = NULL) {
+  imap_dfr(ps_list, function(ps, m) {
+    ps_agg <- agg_rank(ps, rank) %>% subset_taxa_custom(tsub)
+    if (!is.null(lakes)) {
+      sd <- data.frame(sample_data(ps_agg))
+      keep <- rownames(sd)[sd$Lake %in% lakes]
+      ps_agg <- prune_samples(keep, ps_agg)
+    }
+    if (relative)
+      ps_agg <- transform_sample_counts(ps_agg, function(x) x / sum(x))
+    df <- psmelt(ps_agg)
+    df$Marker <- m
+    df
+  })
+}
 
 # Significance stars from p-value
 sig_stars <- function(p) {
@@ -91,7 +185,7 @@ save_plot <- function(p, filepath, width = 12, height = 8) {
   cat("Saved:", filepath, "\n")
 }
 
-# Save a data frame as CSV and Word - formatted table (editable)
+# Save a data frame as CSV and Word - formatted table (editable in Word)
 save_stats <- function(df, filepath_base, caption = NULL) {
   dir.create(dirname(filepath_base), recursive = TRUE, showWarnings = FALSE)
 
@@ -261,6 +355,23 @@ run_permanova <- function(ps, formula_str, distance = "jaccard",
           permutations = nperm)
 }
 
+# Build a combined marker ps for across-marker ordination
+build_marker_ps <- function(ps_list, rank = "Species", shared_samps = NULL) {
+  if (is.null(shared_samps))
+    shared_samps <- Reduce(intersect, map(ps_list, sample_names))
+
+  combined <- imap(ps_list, function(ps, m) {
+    ps <- prune_samples(shared_samps, ps) %>% agg_rank(rank) %>% to_pa()
+    sample_names(ps) <- paste0(m, "__", sample_names(ps))
+    sd <- data.frame(sample_data(ps))
+    sd$Marker <- m
+    sd$Original_Sample <- gsub(paste0(m, "__"), "", rownames(sd))
+    sample_data(ps) <- sample_data(sd)
+    ps
+  })
+  Reduce(merge_phyloseq, combined)
+}
+
 # Betadisper
 run_betadisper <- function(ps, group_var = "Lake",
                            distance = "jaccard", binary = TRUE) {
@@ -375,4 +486,98 @@ compare_to_trebitz <- function(ps, trebitz_df, rank = "Species", lake = NULL) {
   unexpected <- setdiff(detected, known)
   if (length(unexpected) == 0) return(tibble(taxon = character(), rank = character()))
   tibble(taxon = unexpected, rank = rank)
+}
+
+# ---- Variance Partitioning ----
+
+# Variance partitioning: environment vs spatial
+run_varpart <- function(ps, env_vars, spatial_vars = NULL, binary = TRUE) {
+  ps_use <- if (binary) to_pa(ps) else ps
+  otu <- as(otu_table(ps_use), "matrix")
+  if (taxa_are_rows(ps_use)) otu <- t(otu)
+  meta <- data.frame(sample_data(ps_use))
+
+  all_vars <- env_vars
+  if (!is.null(spatial_vars) && is.character(spatial_vars))
+    all_vars <- c(all_vars, spatial_vars)
+
+  available <- intersect(all_vars, colnames(meta))
+  if (length(available) < length(all_vars)) {
+    missing_cols <- setdiff(all_vars, colnames(meta))
+    env_vars <- intersect(env_vars, colnames(meta))
+    if (is.character(spatial_vars))
+      spatial_vars <- intersect(spatial_vars, colnames(meta))
+    all_vars <- c(env_vars, if (is.character(spatial_vars)) spatial_vars)
+  }
+  if (length(all_vars) == 0) { warning("No valid variables"); return(NULL) }
+
+  complete <- complete.cases(meta[, all_vars, drop = FALSE])
+  if (sum(complete) < 4) {
+    return(NULL)
+  }
+
+  meta <- meta[complete, , drop = FALSE]
+  otu <- otu[complete, , drop = FALSE]
+  otu <- otu[, colSums(otu) > 0, drop = FALSE]
+  row_ok <- rowSums(otu) > 0
+  otu <- otu[row_ok, , drop = FALSE]
+  meta <- meta[row_ok, , drop = FALSE]
+
+  if (nrow(otu) < 4 || ncol(otu) < 2) {
+    return(NULL)
+  }
+  otu[!is.finite(otu)] <- 0
+
+  env_df <- data.frame(lapply(meta[, env_vars, drop = FALSE], function(x) {
+    if (is.factor(x) || is.character(x)) as.numeric(as.factor(x))
+    else as.numeric(x)
+  }))
+  env_df[is.na(env_df)] <- 0
+
+  const_cols <- sapply(env_df, function(x) length(unique(x)) < 2)
+  if (any(const_cols)) {
+    env_df <- env_df[, !const_cols, drop = FALSE]
+  }
+  if (ncol(env_df) == 0) { 
+    cat("  No variable predictors remain\n"); return(NULL) }
+
+  if (!is.null(spatial_vars) && length(spatial_vars) > 0) {
+    if (is.character(spatial_vars)) {
+      spat_df <- data.frame(lapply(meta[, spatial_vars, drop = FALSE], as.numeric))
+    } else {
+      spat_df <- spatial_vars[complete, , drop = FALSE]
+      spat_df <- spat_df[row_ok, , drop = FALSE]
+      spat_df <- data.frame(lapply(spat_df, as.numeric))
+    }
+    spat_df[!is.finite(as.matrix(spat_df))] <- 0
+    if (ncol(spat_df) > 0) varpart(otu, env_df, spat_df)
+    else varpart(otu, env_df)
+  } else {
+    varpart(otu, env_df)
+  }
+}
+
+# ---- Focal Taxon ----
+
+# Subset a ps to a single taxon group
+subset_focal_taxon <- function(ps, focal_rank, focal_name) {
+  tt <- access(ps, "tax_table", errorIfNULL = FALSE)
+  if (is.null(tt)) return(NULL)
+  if (!(focal_rank %in% colnames(tt))) return(NULL)
+  ps_sub <- subset_taxa_custom(ps, list(rank = focal_rank, include = focal_name))
+  if (ntaxa(ps_sub) == 0) return(NULL)
+  ps_sub
+}
+
+# Detection counts per marker for a focal taxon
+focal_detection_summary <- function(ps_list, focal_rank, focal_name,
+                                    rank = "Species") {
+  imap_dfr(ps_list, function(ps, m) {
+    ps_sub <- subset_focal_taxon(ps, focal_rank, focal_name)
+    if (is.null(ps_sub)) return(tibble(Marker = m, n_taxa = 0, n_samples_with = 0))
+    ps_agg <- agg_rank(ps_sub, rank)
+    n_taxa <- ntaxa(ps_agg)
+    sums <- sample_sums(to_pa(ps_agg))
+    tibble(Marker = m, n_taxa = n_taxa, n_samples_with = sum(sums > 0))
+  })
 }
