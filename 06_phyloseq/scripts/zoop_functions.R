@@ -261,6 +261,45 @@ run_permanova <- function(ps, formula_str, distance = "jaccard",
           permutations = nperm)
 }
 
+# Betadisper
+run_betadisper <- function(ps, group_var = "Lake",
+                           distance = "jaccard", binary = TRUE) {
+  ps_use <- if (binary) to_pa(ps) else ps
+  otu <- as(otu_table(ps_use), "matrix")
+  if (taxa_are_rows(ps_use)) otu <- t(otu)
+  meta <- data.frame(sample_data(ps_use))
+  dm <- vegdist(otu, method = distance, binary = binary)
+  bd <- betadisper(dm, meta[[group_var]])
+  list(betadisper = bd, permtest = permutest(bd, permutations = 999))
+}
+
+# ---- Differential Abundance ----
+
+# SIMPER analysis
+run_simper_analysis <- function(ps, group_var = "Lake",
+                                rank = "Genus", top_n = 15, tsub = NULL) {
+  ps_agg <- agg_rank(ps, rank) %>% subset_taxa_custom(tsub)
+  otu <- as(otu_table(ps_agg), "matrix")
+  if (taxa_are_rows(ps_agg)) otu <- t(otu)
+
+  tt <- data.frame(tax_table(ps_agg), stringsAsFactors = FALSE)
+  if (rank %in% colnames(tt)) {
+    tax_names_vec <- tt[[rank]][match(colnames(otu), rownames(tt))]
+    tax_names_vec[is.na(tax_names_vec)] <- colnames(otu)[is.na(tax_names_vec)]
+    colnames(otu) <- make.unique(tax_names_vec)
+  }
+
+  meta <- data.frame(sample_data(ps_agg))
+  sim <- simper(otu, meta[[group_var]], permutations = 99)
+  summ <- lapply(names(summary(sim)), function(comp) {
+    s <- summary(sim)[[comp]]
+    s$taxon <- rownames(s)
+    s$comparison <- comp
+    head(s, top_n)
+  })
+  list(simper = sim, top = bind_rows(summ))
+}
+
 # ---- Heatmap ----
 
 # Top-N taxa heatmap with lake annotation

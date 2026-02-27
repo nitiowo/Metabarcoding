@@ -51,9 +51,9 @@ ps_markers     <- list(Folmer = ps_folmer, Leray = ps_leray, `18S` = ps_18S)
 ps_all_methods <- c(ps_markers, list(Morphology = ps_morph))
 ps_coi         <- list(Folmer = ps_folmer, Leray = ps_leray)
 
-# ---- Output directories for each analysis step/script ----
+# ---- Output directories ----
 out_dirs <- c("exploratory", "alpha", "beta", "composition",
-              "overlap", "heatmaps", "trebitz_compare")
+              "overlap", "heatmaps", "differential", "trebitz_compare")
 for (d in out_dirs) {
   dir.create(file.path(output_root, d, "figures"),
              recursive = TRUE, showWarnings = FALSE)

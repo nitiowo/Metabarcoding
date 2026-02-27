@@ -28,30 +28,30 @@ alpha_summary <- alpha_all %>%
                    list(mean = mean, sd = sd), .names = "{.col}_{.fn}"),
             n = n(), .groups = "drop")
 
-write.csv(alpha_summary,
-          file.path(outdir, "stats", "alpha_summary_by_marker_lake.csv"),
-          row.names = FALSE)
+save_stats(alpha_summary,
+           file.path(outdir, "stats", "alpha_summary_by_marker_lake"),
+           caption = "Alpha diversity by marker and lake (mean +/- SD)")
 
 # ---- Between Markers: Kruskal-Wallis ----
 kw_mk <- run_kruskal(alpha_long, "Marker")
 pw_mk <- run_pairwise_wilcox(alpha_long, "Marker")
 
-write.csv(kw_mk, file.path(outdir, "stats", "alpha_kruskal_markers.csv"),
-          row.names = FALSE)
-write.csv(pw_mk, file.path(outdir, "stats", "alpha_pairwise_markers.csv"),
-          row.names = FALSE)
+save_stats(kw_mk, file.path(outdir, "stats", "alpha_kruskal_markers"),
+           caption = "Kruskal-Wallis: alpha diversity between markers")
+save_stats(pw_mk, file.path(outdir, "stats", "alpha_pairwise_markers"),
+           caption = "Pairwise Wilcoxon: alpha diversity between markers")
 
 # ---- Between Lakes Per Marker ----
 kw_lk <- run_kruskal(alpha_long, "Lake", group_by_vars = "Marker")
 pw_lk <- run_pairwise_wilcox(alpha_long, "Lake", group_by_vars = "Marker")
 
-write.csv(kw_lk, file.path(outdir, "stats",
-                            "alpha_kruskal_lakes_per_marker.csv"),
-          row.names = FALSE)
-write.csv(pw_lk %>% filter(p.adj < 0.05),
-          file.path(outdir, "stats",
-                    "alpha_pairwise_lakes_significant.csv"),
-          row.names = FALSE)
+save_stats(kw_lk, file.path(outdir, "stats",
+                             "alpha_kruskal_lakes_per_marker"),
+           caption = "Kruskal-Wallis: alpha between lakes (per marker)")
+save_stats(pw_lk %>% filter(p.adj < 0.05),
+           file.path(outdir, "stats",
+                     "alpha_pairwise_lakes_significant"),
+           caption = "Significant pairwise lake comparisons")
 
 # ---- Boxplot: Between Markers ----
 p_mk <- ggplot(alpha_long, aes(x = Marker, y = Value, fill = Marker)) +
