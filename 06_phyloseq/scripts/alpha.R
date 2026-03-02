@@ -53,7 +53,35 @@ save_stats(pw_lk %>% filter(p.adj < 0.05),
                      "alpha_pairwise_lakes_significant"),
            caption = "Significant pairwise lake comparisons")
 
-# ---- Boxplot: Between Markers ----
+# ---- Spearman between marker comparison ----
+alpha_wide <- alpha_all %>%
+  select(Sample_ID, Marker, Station_ID, Lake, all_of(use_metrics)) %>%
+  pivot_longer(cols = all_of(use_metrics),
+               names_to = "Metric", values_to = "Value") %>%
+  pivot_wider(names_from = Marker, values_from = Value)
+
+marker_pairs <- combn(names(ps_filt), 2, simplify = FALSE)
+
+cor_table <- alpha_wide %>%
+  group_by(Metric) %>%
+  reframe({
+    map_dfr(marker_pairs, function(pr) {
+      vals <- cur_data() %>% select(all_of(pr)) %>% drop_na()
+      if (nrow(vals) < 5) return(NULL)
+      ct <- cor.test(vals[[1]], vals[[2]], method = "spearman")
+      tibble(Marker_A = pr[1], Marker_B = pr[2],
+             rho = ct$estimate, p = ct$p.value, n = nrow(vals))
+    })
+  }) %>%
+  mutate(sig = sig_stars(p))
+
+save_stats(cor_table,
+           file.path(outdir, "stats", "alpha_concordance_spearman"),
+           caption = "Spearman correlations of site-level alpha diversity")
+
+# ---- Plots ----
+
+# Between markers
 p_mk <- ggplot(alpha_long, aes(x = Marker, y = Value, fill = Marker)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.7) +
   geom_jitter(width = 0.2, alpha = 0.4, size = 1) +
@@ -79,3 +107,43 @@ p_lk <- ggplot(alpha_long, aes(x = Lake, y = Value, fill = Lake)) +
 save_plot(p_lk, file.path(outdir, "figures",
                            "alpha_boxplot_lake_by_marker.pdf"),
           width = 16, height = 10)
+
+# Concordance scatterplots
+scatter_plots <- purrr::compact(map(marker_pairs, function(pr) {
+  df <- alpha_wide %>% filter(Metric == "Observed") %>%
+    select(Sample_ID, Lake, all_of(pr)) %>% drop_na()
+  if (nrow(df) < 3) return(NULL)
+  ggplot(df, aes(x = .data[[pr[1]]], y = .data[[pr[2]]], color = Lake)) +
+    geom_point(size = 2.5) +
+    geom_smooth(method = "lm", se = TRUE, color = "black", linetype = 2) +
+    scale_color_manual(values = lake_colors) +
+    theme_minimal(base_size = 10) +
+    labs(title = paste(pr[1], "vs", pr[2]))
+}))
+
+if (length(scatter_plots) > 0) {
+  p_conc <- wrap_plots(scatter_plots, ncol = 3) +
+    plot_annotation(title = "Site-level richness concordance (Observed)")
+  save_plot(p_conc, file.path(outdir, "figures",
+                               "alpha_concordance_scatter.pdf"),
+            width = 16, height = 10)
+}
+
+# ---- Combined Markers Alpha ----
+alpha_comb <- compute_alpha(ps_markers_combined, "Combined",
+                             use_metrics, lake_order)
+alpha_comb_long <- alpha_comb %>%
+  pivot_longer(cols = all_of(use_metrics),
+               names_to = "Metric", values_to = "Value")
+
+p_comb <- ggplot(alpha_comb_long, aes(x = Lake, y = Value, fill = Lake)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  scale_fill_manual(values = lake_colors) +
+  theme_minimal(base_size = 10) +
+  labs(title = "Alpha diversity - combined markers (P/A)",
+       y = "Diversity value")
+save_plot(p_comb, file.path(outdir, "figures",
+                             "alpha_boxplot_combined_markers.pdf"),
+          width = 10, height = 6)
